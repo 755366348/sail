@@ -121,6 +121,18 @@ func writeInventoryReportFile(report InventoryReportData, reportPerson, path str
 			return err
 		}
 	}
+	if len(report.Reconciliation.Unmatched) > 0 {
+		unmatchedSheet := "不匹配项-单号"
+		if report.MatchMode == matchByIMEI {
+			unmatchedSheet = "不匹配项-IMEI"
+		}
+		if _, err := book.NewSheet(unmatchedSheet); err != nil {
+			return err
+		}
+		if err := writeRawSheet(book, unmatchedSheet, unmatchedRawDataset(report.Reconciliation.Unmatched), styles); err != nil {
+			return err
+		}
+	}
 	book.SetActiveSheet(0)
 	if err := book.SaveAs(path); err != nil {
 		return fmt.Errorf("保存报表失败: %w", err)

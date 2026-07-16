@@ -149,7 +149,7 @@ func (a *App) SaveReport(config PivotConfig, allowInvalid bool) (SaveResult, err
 	}
 	var report InventoryReportData
 	if len(outbounds) == 0 {
-		report = InventoryReportData{Inbound: inbound}
+		report = InventoryReportData{Inbound: inbound, MatchMode: reconciliationMatchMode(config.MatchMode)}
 	} else {
 		report = reconcileInventoriesWithMatchMode(inbound, outbounds, config.MatchMode)
 		if !report.Reconciliation.Valid && !allowInvalid {

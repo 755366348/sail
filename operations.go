@@ -79,6 +79,7 @@ type InventoryReportData struct {
 	Outbounds      []OutboundReportData
 	Remaining      []InventoryRecord
 	Reconciliation ReconciliationResult
+	MatchMode      reconciliationMatchMode
 }
 
 type reconciliationMatchMode string
@@ -279,10 +280,15 @@ func reconcileInventories(inbound []InventoryRecord, outbounds []OutboundData) I
 }
 
 func reconcileInventoriesWithMatchMode(inbound []InventoryRecord, outbounds []OutboundData, matchMode string) InventoryReportData {
+	var report InventoryReportData
 	if reconciliationMatchMode(matchMode) == matchByIMEI {
-		return reconcileInventoriesByIMEI(inbound, outbounds)
+		report = reconcileInventoriesByIMEI(inbound, outbounds)
+		report.MatchMode = matchByIMEI
+		return report
 	}
-	return reconcileInventoriesByOrderNumber(inbound, outbounds)
+	report = reconcileInventoriesByOrderNumber(inbound, outbounds)
+	report.MatchMode = matchByOrderNumber
+	return report
 }
 
 func reconcileInventoriesByOrderNumber(inbound []InventoryRecord, outbounds []OutboundData) InventoryReportData {
@@ -482,6 +488,21 @@ func remainingRawDataset(records []InventoryRecord, dateLabel, retainedLabel str
 		rows = append(rows, []string{dateLabel, record.OrderNumber, record.UPC, record.Identifier, record.ProductName, strconv.Itoa(int(record.Quantity)), retainedLabel})
 	}
 	return Dataset{Headers: []string{dateLabel, "单号", "UPC", "IMEI", "商品名称", "数量", retainedLabel}, Rows: rows}
+}
+
+func unmatchedRawDataset(records []UnmatchedRecord) Dataset {
+	rows := make([][]string, 0, len(records))
+	for _, record := range records {
+		rows = append(rows, []string{
+			record.FileName,
+			strconv.Itoa(record.BoxNumber),
+			record.TrackingNumber,
+			record.UPC,
+			record.Identifier,
+			record.ProductName,
+		})
+	}
+	return Dataset{Headers: []string{"出库表", "箱号", "单号", "UPC", "IMEI", "商品名称"}, Rows: rows}
 }
 
 func monthDayLabel(value string, fallback time.Time) string {

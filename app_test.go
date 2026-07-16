@@ -159,6 +159,32 @@ func TestReconcileMatchesByIMEIWhenSelected(t *testing.T) {
 	}
 }
 
+func TestWriteInventoryReportIncludesIMEIUnmatchedSheet(t *testing.T) {
+	inbound := []InventoryRecord{{OrderNumber: "IN-ORDER", UPC: "UPC-A", Identifier: "IMEI-IN", ProductName: "Phone A", Quantity: 1}}
+	outbound := OutboundData{
+		FileName:      "outbound.xls",
+		DeclaredTotal: 1,
+		Records:       []OutboundRecord{{TrackingNumber: "OUT-ORDER", UPC: "UPC-A", Identifier: "IMEI-OUT"}},
+	}
+	report := reconcileInventoriesWithMatchMode(inbound, []OutboundData{outbound}, string(matchByIMEI))
+	if len(report.Reconciliation.Unmatched) != 1 {
+		t.Fatalf("expected one unmatched IMEI, got %+v", report.Reconciliation)
+	}
+	path := filepath.Join(t.TempDir(), "imei-unmatched.xlsx")
+	if err := writeInventoryReportFile(report, "测试人", path); err != nil {
+		t.Fatalf("writeInventoryReportFile returned an error: %v", err)
+	}
+	book, err := excelize.OpenFile(path)
+	if err != nil {
+		t.Fatalf("generated workbook could not be opened: %v", err)
+	}
+	defer func() { _ = book.Close() }()
+	sheets := strings.Join(book.GetSheetList(), ",")
+	if !strings.Contains(sheets, "不匹配项-IMEI") || strings.Contains(sheets, "不匹配项-单号") {
+		t.Fatalf("unexpected IMEI unmatched sheet list: %v", book.GetSheetList())
+	}
+}
+
 func TestWriteInventoryReportFiles(t *testing.T) {
 	inboundDataset, err := loadDataset("a.xls")
 	if err != nil {
@@ -199,7 +225,7 @@ func TestWriteInventoryReportFiles(t *testing.T) {
 		t.Fatalf("generated inventory workbook could not be opened: %v", err)
 	}
 	defer func() { _ = book.Close() }()
-	expected := "入库表,入库-透视,入库-概览,出库表,出库-透视,出库-概览,留仓表,留仓-透视,留仓-概览"
+	expected := "入库表,入库-透视,入库-概览,出库表,出库-透视,出库-概览,留仓表,留仓-透视,留仓-概览,不匹配项-单号"
 	if sheets := book.GetSheetList(); strings.Join(sheets, ",") != expected {
 		t.Fatalf("unexpected inventory sheet list: %v", sheets)
 	}
@@ -210,6 +236,10 @@ func TestWriteInventoryReportFiles(t *testing.T) {
 	remainingRows, err := book.GetRows("留仓表")
 	if err != nil || len(remainingRows) != 32 || remainingRows[0][0] != "7月14日" || remainingRows[0][len(remainingRows[0])-1] != "7.14留仓" {
 		t.Fatalf("unexpected remaining raw sheet: rows=%d headers=%v err=%v", len(remainingRows), remainingRows[0], err)
+	}
+	unmatchedRows, err := book.GetRows("不匹配项-单号")
+	if err != nil || len(unmatchedRows) != 14 || strings.Join(unmatchedRows[0], ",") != "出库表,箱号,单号,UPC,IMEI,商品名称" {
+		t.Fatalf("unexpected unmatched raw sheet: rows=%d headers=%v err=%v", len(unmatchedRows), unmatchedRows[0], err)
 	}
 }
 
