@@ -151,11 +151,37 @@ func TestReconcileMatchesByIMEIWhenSelected(t *testing.T) {
 	outbound := OutboundData{
 		FileName:      "outbound.xls",
 		DeclaredTotal: 1,
-		Records:       []OutboundRecord{{TrackingNumber: "OUT-ORDER", UPC: "UPC-A", Identifier: "IMEI-001"}},
+		Records:       []OutboundRecord{{TrackingNumber: "OUT-ORDER", UPC: "UPC-A", IMEI: "IMEI-001", Identifier: "IMEI-001"}},
 	}
 	report := reconcileInventoriesWithMatchMode(inbound, []OutboundData{outbound}, string(matchByIMEI))
 	if !report.Reconciliation.Valid || report.Reconciliation.MatchedTotal != 1 || report.Reconciliation.RemainingTotal != 0 {
 		t.Fatalf("expected IMEI matching to ignore different order numbers, got %+v", report.Reconciliation)
+	}
+}
+
+func TestOrderNumberModeSupportsBlankIMEI(t *testing.T) {
+	dataset, err := loadDataset("c.xls")
+	if err != nil {
+		t.Fatalf("loadDataset returned an error: %v", err)
+	}
+	inbound, err := inboundRecords(dataset)
+	if err != nil {
+		t.Fatalf("inboundRecords returned an error: %v", err)
+	}
+	outbound, err := parseOutboundFile("d.xls")
+	if err != nil {
+		t.Fatalf("parseOutboundFile returned an error: %v", err)
+	}
+	if len(inbound) != 122 || len(outbound.Records) != 122 {
+		t.Fatalf("unexpected c/d record totals: inbound=%d outbound=%d", len(inbound), len(outbound.Records))
+	}
+	byOrderNumber := reconcileInventoriesWithMatchMode(inbound, []OutboundData{outbound}, string(matchByOrderNumber))
+	if !byOrderNumber.Reconciliation.Valid || byOrderNumber.Reconciliation.RemainingTotal != 0 {
+		t.Fatalf("expected order-number matching to support blank IMEI, got %+v", byOrderNumber.Reconciliation)
+	}
+	byIMEI := reconcileInventoriesWithMatchMode(inbound, []OutboundData{outbound}, string(matchByIMEI))
+	if byIMEI.Reconciliation.Valid || !strings.Contains(strings.Join(byIMEI.Reconciliation.Errors, "\n"), "缺少 IMEI") {
+		t.Fatalf("expected IMEI mode to report missing IMEI, got %+v", byIMEI.Reconciliation)
 	}
 }
 

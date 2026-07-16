@@ -123,7 +123,7 @@ func parseOutboundFile(path string) (OutboundData, error) {
 		return OutboundData{}, fmt.Errorf("未在出库 Sheet 1 找到“出库总数量”")
 	}
 	if len(outbound.Records) == 0 {
-		return OutboundData{}, fmt.Errorf("未在出库 Sheet 2 读取到 IMEI 明细")
+		return OutboundData{}, fmt.Errorf("未在出库 Sheet 2 读取到出库明细")
 	}
 	return outbound, nil
 }
@@ -176,7 +176,7 @@ func parseOutboundDetails(rows [][]string, outbound *OutboundData) error {
 			continue
 		}
 		fields := headerPositions(row)
-		if fields["序号"] >= 0 && fields["单号"] >= 0 && fields["upc"] >= 0 && fields["imei"] >= 0 {
+		if fields["序号"] >= 0 && fields["单号"] >= 0 && fields["upc"] >= 0 {
 			header = fields
 			continue
 		}
@@ -185,13 +185,6 @@ func parseOutboundDetails(rows [][]string, outbound *OutboundData) error {
 		}
 		imei := strings.TrimSpace(cellAt(row, header["imei"]))
 		sn := strings.TrimSpace(cellAt(row, header["sn"]))
-		identifier := imei
-		if identifier == "" {
-			identifier = sn
-		}
-		if identifier == "" {
-			return fmt.Errorf("第 %d 箱第 %s 条记录缺少 IMEI", currentBox, first)
-		}
 		trackingNumber := strings.TrimSpace(cellAt(row, header["单号"]))
 		if trackingNumber == "" {
 			return fmt.Errorf("第 %d 箱第 %s 条记录缺少单号", currentBox, first)
@@ -202,7 +195,7 @@ func parseOutboundDetails(rows [][]string, outbound *OutboundData) error {
 			UPC:            strings.TrimSpace(cellAt(row, header["upc"])),
 			SN:             sn,
 			IMEI:           imei,
-			Identifier:     identifier,
+			Identifier:     imei,
 		}
 		outbound.Records = append(outbound.Records, record)
 		outbound.Boxes[boxIndex[currentBox]].Actual++
@@ -245,7 +238,7 @@ func firstNonBlank(values []string) string {
 
 func inboundRecords(dataset Dataset) ([]InventoryRecord, error) {
 	indexes := headerIndexes(dataset.Headers)
-	for _, field := range []string{"单号", "UPC", "IMEI", "商品名称", "数量"} {
+	for _, field := range []string{"单号", "UPC", "商品名称", "数量"} {
 		if _, ok := indexes[field]; !ok {
 			return nil, fmt.Errorf("入库表缺少必要字段 %q", field)
 		}
@@ -256,9 +249,9 @@ func inboundRecords(dataset Dataset) ([]InventoryRecord, error) {
 		if orderNumber == "" {
 			return nil, fmt.Errorf("入库表存在缺少单号的记录")
 		}
-		identifier := strings.TrimSpace(cellAt(row, indexes["IMEI"]))
-		if identifier == "" {
-			return nil, fmt.Errorf("入库表存在缺少 IMEI 的记录")
+		identifier := ""
+		if imeiIndex, exists := indexes["IMEI"]; exists {
+			identifier = strings.TrimSpace(cellAt(row, imeiIndex))
 		}
 		records = append(records, InventoryRecord{
 			OrderNumber: orderNumber,
@@ -335,7 +328,7 @@ func reconcileInventoriesByOrderNumber(inbound []InventoryRecord, outbounds []Ou
 				record.ProductName = source.ProductByUPC[record.UPC]
 				result.Unmatched = append(result.Unmatched, UnmatchedRecord{
 					FileName: source.FileName, BoxNumber: record.BoxNumber, TrackingNumber: record.TrackingNumber,
-					UPC: record.UPC, Identifier: record.Identifier, ProductName: record.ProductName,
+					UPC: record.UPC, Identifier: record.IMEI, ProductName: record.ProductName,
 				})
 			}
 		}
@@ -373,7 +366,12 @@ func reconcileInventoriesByIMEI(inbound []InventoryRecord, outbounds []OutboundD
 	report := InventoryReportData{Inbound: inbound}
 	result := ReconciliationResult{HasOutbound: len(outbounds) > 0, InboundTotal: quantityOfInbound(inbound)}
 	inboundByIMEI := make(map[string]InventoryRecord, len(inbound))
+	missingInboundIMEI := 0
 	for _, record := range inbound {
+		if record.Identifier == "" {
+			missingInboundIMEI++
+			continue
+		}
 		if _, exists := inboundByIMEI[record.Identifier]; exists {
 			result.Errors = append(result.Errors, fmt.Sprintf("入库表存在重复 IMEI：%s", record.Identifier))
 			continue
@@ -382,6 +380,7 @@ func reconcileInventoriesByIMEI(inbound []InventoryRecord, outbounds []OutboundD
 	}
 	matched := make(map[string]bool)
 	seenOutbound := make(map[string]string)
+	missingOutboundIMEI := 0
 	for _, source := range outbounds {
 		shipment := OutboundReportData{Source: source}
 		result.OutboundDeclaredTotal += source.DeclaredTotal
@@ -396,13 +395,22 @@ func reconcileInventoriesByIMEI(inbound []InventoryRecord, outbounds []OutboundD
 		}
 		for _, sourceRecord := range source.Records {
 			record := sourceRecord
-			if priorFile, exists := seenOutbound[record.Identifier]; exists {
-				result.Errors = append(result.Errors, fmt.Sprintf("IMEI %s 同时出现在 %s 和 %s", record.Identifier, priorFile, source.FileName))
+			if record.IMEI == "" {
+				missingOutboundIMEI++
+				record.ProductName = source.ProductByUPC[record.UPC]
+				result.Unmatched = append(result.Unmatched, UnmatchedRecord{
+					FileName: source.FileName, BoxNumber: record.BoxNumber, TrackingNumber: record.TrackingNumber,
+					UPC: record.UPC, Identifier: record.IMEI, ProductName: record.ProductName,
+				})
 				continue
 			}
-			seenOutbound[record.Identifier] = source.FileName
-			if incoming, exists := inboundByIMEI[record.Identifier]; exists {
-				matched[record.Identifier] = true
+			if priorFile, exists := seenOutbound[record.IMEI]; exists {
+				result.Errors = append(result.Errors, fmt.Sprintf("IMEI %s 同时出现在 %s 和 %s", record.IMEI, priorFile, source.FileName))
+				continue
+			}
+			seenOutbound[record.IMEI] = source.FileName
+			if incoming, exists := inboundByIMEI[record.IMEI]; exists {
+				matched[record.IMEI] = true
 				result.MatchedTotal += int(incoming.Quantity)
 				record.ProductName = incoming.ProductName
 				shipment.Records = append(shipment.Records, record)
@@ -422,6 +430,12 @@ func reconcileInventoriesByIMEI(inbound []InventoryRecord, outbounds []OutboundD
 		}
 	}
 	result.RemainingTotal = quantityOfInbound(report.Remaining)
+	if missingInboundIMEI > 0 {
+		result.Errors = append(result.Errors, fmt.Sprintf("入库表有 %d 条记录缺少 IMEI，无法使用 IMEI 校验", missingInboundIMEI))
+	}
+	if missingOutboundIMEI > 0 {
+		result.Errors = append(result.Errors, fmt.Sprintf("出库表有 %d 条记录缺少 IMEI，无法使用 IMEI 校验", missingOutboundIMEI))
+	}
 	if len(result.Unmatched) > 0 {
 		result.Errors = append(result.Errors, fmt.Sprintf("%d 条出库 IMEI 未在入库表匹配到", len(result.Unmatched)))
 	}
