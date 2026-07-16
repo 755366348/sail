@@ -184,9 +184,13 @@ func parseOutboundDetails(rows [][]string, outbound *OutboundData) error {
 		if identifier == "" {
 			return fmt.Errorf("第 %d 箱第 %s 条记录缺少 IMEI", currentBox, first)
 		}
+		trackingNumber := strings.TrimSpace(cellAt(row, header["单号"]))
+		if trackingNumber == "" {
+			return fmt.Errorf("第 %d 箱第 %s 条记录缺少单号", currentBox, first)
+		}
 		record := OutboundRecord{
 			BoxNumber:      currentBox,
-			TrackingNumber: strings.TrimSpace(cellAt(row, header["单号"])),
+			TrackingNumber: trackingNumber,
 			UPC:            strings.TrimSpace(cellAt(row, header["upc"])),
 			SN:             sn,
 			IMEI:           imei,
@@ -240,12 +244,16 @@ func inboundRecords(dataset Dataset) ([]InventoryRecord, error) {
 	}
 	records := make([]InventoryRecord, 0, len(dataset.Rows))
 	for _, row := range dataset.Rows {
+		orderNumber := strings.TrimSpace(cellAt(row, indexes["单号"]))
+		if orderNumber == "" {
+			return nil, fmt.Errorf("入库表存在缺少单号的记录")
+		}
 		identifier := strings.TrimSpace(cellAt(row, indexes["IMEI"]))
 		if identifier == "" {
 			return nil, fmt.Errorf("入库表存在缺少 IMEI 的记录")
 		}
 		records = append(records, InventoryRecord{
-			OrderNumber: strings.TrimSpace(cellAt(row, indexes["单号"])),
+			OrderNumber: orderNumber,
 			UPC:         strings.TrimSpace(cellAt(row, indexes["UPC"])),
 			Identifier:  identifier,
 			ProductName: strings.TrimSpace(cellAt(row, indexes["商品名称"])),
@@ -262,16 +270,18 @@ func reconcileInventory(inbound []InventoryRecord, outbound OutboundData) Invent
 func reconcileInventories(inbound []InventoryRecord, outbounds []OutboundData) InventoryReportData {
 	report := InventoryReportData{Inbound: inbound}
 	result := ReconciliationResult{HasOutbound: len(outbounds) > 0, InboundTotal: quantityOfInbound(inbound)}
-	inboundByID := make(map[string]InventoryRecord, len(inbound))
-	for _, record := range inbound {
-		if _, exists := inboundByID[record.Identifier]; exists {
-			result.Errors = append(result.Errors, fmt.Sprintf("入库表存在重复 IMEI：%s", record.Identifier))
-			continue
-		}
-		inboundByID[record.Identifier] = record
+
+	// A business order number is the agreed reconciliation key. One order can
+	// legitimately contain several devices, so each order maps to a queue of
+	// inbound records. IMEI remains available in raw sheets for reference only.
+	inboundByOrderNumber := make(map[string][]int, len(inbound))
+	for index, record := range inbound {
+		inboundByOrderNumber[record.OrderNumber] = append(inboundByOrderNumber[record.OrderNumber], index)
 	}
-	matched := make(map[string]bool)
-	seenOutbound := make(map[string]string)
+	matched := make([]bool, len(inbound))
+	nextInboundByOrderNumber := make(map[string]int, len(inboundByOrderNumber))
+	outboundCountByOrderNumber := make(map[string]int)
+	matchedCountByOrderNumber := make(map[string]int)
 	for _, source := range outbounds {
 		shipment := OutboundReportData{Source: source}
 		result.OutboundDeclaredTotal += source.DeclaredTotal
@@ -286,13 +296,14 @@ func reconcileInventories(inbound []InventoryRecord, outbounds []OutboundData) I
 		}
 		for _, sourceRecord := range source.Records {
 			record := sourceRecord
-			if priorFile, exists := seenOutbound[record.Identifier]; exists {
-				result.Errors = append(result.Errors, fmt.Sprintf("IMEI %s 同时出现在 %s 和 %s", record.Identifier, priorFile, source.FileName))
-				continue
-			}
-			seenOutbound[record.Identifier] = source.FileName
-			if incoming, exists := inboundByID[record.Identifier]; exists {
-				matched[record.Identifier] = true
+			outboundCountByOrderNumber[record.TrackingNumber]++
+			queue := inboundByOrderNumber[record.TrackingNumber]
+			next := nextInboundByOrderNumber[record.TrackingNumber]
+			if next < len(queue) {
+				incoming := inbound[queue[next]]
+				matched[queue[next]] = true
+				nextInboundByOrderNumber[record.TrackingNumber] = next + 1
+				matchedCountByOrderNumber[record.TrackingNumber]++
 				result.MatchedTotal += int(incoming.Quantity)
 				record.ProductName = incoming.ProductName
 				shipment.Records = append(shipment.Records, record)
@@ -306,14 +317,25 @@ func reconcileInventories(inbound []InventoryRecord, outbounds []OutboundData) I
 		}
 		report.Outbounds = append(report.Outbounds, shipment)
 	}
-	for _, record := range inbound {
-		if !matched[record.Identifier] {
+	for index, record := range inbound {
+		if !matched[index] {
 			report.Remaining = append(report.Remaining, record)
 		}
 	}
 	result.RemainingTotal = quantityOfInbound(report.Remaining)
+	orderNumbers := make([]string, 0, len(outboundCountByOrderNumber))
+	for orderNumber := range outboundCountByOrderNumber {
+		orderNumbers = append(orderNumbers, orderNumber)
+	}
+	sort.Strings(orderNumbers)
+	for _, orderNumber := range orderNumbers {
+		outboundCount := outboundCountByOrderNumber[orderNumber]
+		if matchedCount := matchedCountByOrderNumber[orderNumber]; matchedCount < outboundCount {
+			result.Errors = append(result.Errors, fmt.Sprintf("单号 %s 出库 %d 条，入库可匹配 %d 条", orderNumber, outboundCount, matchedCount))
+		}
+	}
 	if len(result.Unmatched) > 0 {
-		result.Errors = append(result.Errors, fmt.Sprintf("%d 条出库 IMEI 未在入库表匹配到", len(result.Unmatched)))
+		result.Errors = append(result.Errors, fmt.Sprintf("%d 条出库单号未在入库表匹配到", len(result.Unmatched)))
 	}
 	if result.InboundTotal-result.RemainingTotal != result.OutboundDeclaredTotal {
 		result.Errors = append(result.Errors, fmt.Sprintf("入库总数 %d - 留仓总数 %d = %d，不等于出库总数 %d", result.InboundTotal, result.RemainingTotal, result.InboundTotal-result.RemainingTotal, result.OutboundDeclaredTotal))
@@ -394,7 +416,7 @@ func retainedLabel(value time.Time) string {
 func sortUnmatched(records []UnmatchedRecord) {
 	sort.Slice(records, func(left, right int) bool {
 		if records[left].BoxNumber == records[right].BoxNumber {
-			return records[left].Identifier < records[right].Identifier
+			return records[left].TrackingNumber < records[right].TrackingNumber
 		}
 		return records[left].BoxNumber < records[right].BoxNumber
 	})

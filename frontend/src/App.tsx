@@ -460,11 +460,11 @@ function App() {
                                     <div className="validation-errors">{reconciliation.errors.map((item) => <span key={item}>{item}</span>)}</div>
                                     {reconciliation.unmatched.length > 0 && (
                                         <div className="unmatched-block">
-                                            <div className="unmatched-title"><Box size={15}/> 未匹配出库设备 ({reconciliation.unmatched.length})</div>
+                                            <div className="unmatched-title"><Box size={15}/> 未匹配出库单号 ({reconciliation.unmatched.length})</div>
                                             <div className="unmatched-table-wrap">
                                                 <table className="unmatched-table">
                                                     <thead><tr><th>出库表</th><th>箱号</th><th>单号</th><th>UPC</th><th>IMEI</th></tr></thead>
-                                                    <tbody>{reconciliation.unmatched.map((item) => <tr key={`${item.fileName}-${item.identifier}`}><td>{item.fileName}</td><td>{item.boxNumber}</td><td>{item.trackingNumber}</td><td>{item.upc}</td><td>{item.identifier}</td></tr>)}</tbody>
+                                                    <tbody>{reconciliation.unmatched.map((item) => <tr key={`${item.fileName}-${item.trackingNumber}`}><td>{item.fileName}</td><td>{item.boxNumber}</td><td>{item.trackingNumber}</td><td>{item.upc}</td><td>{item.identifier}</td></tr>)}</tbody>
                                                 </table>
                                             </div>
                                         </div>
@@ -528,7 +528,7 @@ function App() {
                         <div className="confirm-icon"><AlertTriangle size={22}/></div>
                         <div>
                             <h2 id="invalid-confirm-title">校验未通过</h2>
-                            <p>将导出已匹配的正常出库记录和对应留仓数据，忽略 {reconciliation.unmatched.length} 条未匹配 IMEI。异常清单不会写入报表。</p>
+                            <p>将导出已匹配的正常出库记录和对应留仓数据，忽略 {reconciliation.unmatched.length} 条未匹配单号。异常清单不会写入报表。</p>
                         </div>
                         <div className="confirm-actions">
                             <button className="button button-secondary" onClick={() => setShowInvalidConfirm(false)}>取消</button>

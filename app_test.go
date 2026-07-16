@@ -127,6 +127,25 @@ func TestParseOutboundAndReconcileSampleFiles(t *testing.T) {
 	}
 }
 
+func TestReconcileMatchesMultipleRecordsByOrderNumber(t *testing.T) {
+	inbound := []InventoryRecord{
+		{OrderNumber: "ORDER-001", UPC: "UPC-A", Identifier: "IMEI-IN-1", ProductName: "Phone A", Quantity: 1},
+		{OrderNumber: "ORDER-001", UPC: "UPC-B", Identifier: "IMEI-IN-2", ProductName: "Phone B", Quantity: 1},
+	}
+	outbound := OutboundData{
+		FileName:      "outbound.xls",
+		DeclaredTotal: 2,
+		Records: []OutboundRecord{
+			{TrackingNumber: "ORDER-001", UPC: "UPC-A", Identifier: "IMEI-OUT-1"},
+			{TrackingNumber: "ORDER-001", UPC: "UPC-B", Identifier: "IMEI-OUT-2"},
+		},
+	}
+	report := reconcileInventory(inbound, outbound)
+	if !report.Reconciliation.Valid || report.Reconciliation.MatchedTotal != 2 || report.Reconciliation.RemainingTotal != 0 {
+		t.Fatalf("expected order-number matching to consume both records, got %+v", report.Reconciliation)
+	}
+}
+
 func TestWriteInventoryReportFiles(t *testing.T) {
 	inboundDataset, err := loadDataset("a.xls")
 	if err != nil {
@@ -192,8 +211,8 @@ func TestMultipleOutboundReportsUseOneRemainingSheet(t *testing.T) {
 	}
 	first := inbound[0]
 	second := inbound[1]
-	firstOutbound := OutboundData{FileName: "出库一.xls", OutboundDate: "2026-07-14", DeclaredTotal: 1, Records: []OutboundRecord{{UPC: first.UPC, Identifier: first.Identifier}}}
-	secondOutbound := OutboundData{FileName: "出库二.xls", OutboundDate: "2026-07-15", DeclaredTotal: 1, Records: []OutboundRecord{{UPC: second.UPC, Identifier: second.Identifier}}}
+	firstOutbound := OutboundData{FileName: "出库一.xls", OutboundDate: "2026-07-14", DeclaredTotal: 1, Records: []OutboundRecord{{UPC: first.UPC, TrackingNumber: first.OrderNumber, Identifier: first.Identifier}}}
+	secondOutbound := OutboundData{FileName: "出库二.xls", OutboundDate: "2026-07-15", DeclaredTotal: 1, Records: []OutboundRecord{{UPC: second.UPC, TrackingNumber: second.OrderNumber, Identifier: second.Identifier}}}
 	report := reconcileInventories(inbound, []OutboundData{firstOutbound, secondOutbound})
 	if !report.Reconciliation.Valid || len(report.Outbounds) != 2 || report.Reconciliation.RemainingTotal != 869 {
 		t.Fatalf("unexpected multi-outbound reconciliation: %+v", report.Reconciliation)
