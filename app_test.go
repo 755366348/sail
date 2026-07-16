@@ -146,6 +146,19 @@ func TestReconcileMatchesMultipleRecordsByOrderNumber(t *testing.T) {
 	}
 }
 
+func TestReconcileMatchesByIMEIWhenSelected(t *testing.T) {
+	inbound := []InventoryRecord{{OrderNumber: "IN-ORDER", UPC: "UPC-A", Identifier: "IMEI-001", ProductName: "Phone A", Quantity: 1}}
+	outbound := OutboundData{
+		FileName:      "outbound.xls",
+		DeclaredTotal: 1,
+		Records:       []OutboundRecord{{TrackingNumber: "OUT-ORDER", UPC: "UPC-A", Identifier: "IMEI-001"}},
+	}
+	report := reconcileInventoriesWithMatchMode(inbound, []OutboundData{outbound}, string(matchByIMEI))
+	if !report.Reconciliation.Valid || report.Reconciliation.MatchedTotal != 1 || report.Reconciliation.RemainingTotal != 0 {
+		t.Fatalf("expected IMEI matching to ignore different order numbers, got %+v", report.Reconciliation)
+	}
+}
+
 func TestWriteInventoryReportFiles(t *testing.T) {
 	inboundDataset, err := loadDataset("a.xls")
 	if err != nil {

@@ -117,7 +117,7 @@ func (a *App) RemoveOutboundFile(id string) error {
 }
 
 // GetReconciliation returns validation and unmatched shipment records for the active imports.
-func (a *App) GetReconciliation() (ReconciliationResult, error) {
+func (a *App) GetReconciliation(matchMode string) (ReconciliationResult, error) {
 	dataset, outbounds, err := a.currentSources()
 	if err != nil {
 		return ReconciliationResult{}, err
@@ -129,7 +129,7 @@ func (a *App) GetReconciliation() (ReconciliationResult, error) {
 	if err != nil {
 		return ReconciliationResult{}, err
 	}
-	result := reconcileInventories(inbound, outbounds).Reconciliation
+	result := reconcileInventoriesWithMatchMode(inbound, outbounds, matchMode).Reconciliation
 	sortUnmatched(result.Unmatched)
 	return result, nil
 }
@@ -151,7 +151,7 @@ func (a *App) SaveReport(config PivotConfig, allowInvalid bool) (SaveResult, err
 	if len(outbounds) == 0 {
 		report = InventoryReportData{Inbound: inbound}
 	} else {
-		report = reconcileInventories(inbound, outbounds)
+		report = reconcileInventoriesWithMatchMode(inbound, outbounds, config.MatchMode)
 		if !report.Reconciliation.Valid && !allowInvalid {
 			return SaveResult{}, fmt.Errorf("校验未通过，无法生成九个 Sheet 报表：%s", strings.Join(report.Reconciliation.Errors, "；"))
 		}

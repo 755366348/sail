@@ -81,6 +81,13 @@ type InventoryReportData struct {
 	Reconciliation ReconciliationResult
 }
 
+type reconciliationMatchMode string
+
+const (
+	matchByOrderNumber reconciliationMatchMode = "orderNumber"
+	matchByIMEI        reconciliationMatchMode = "imei"
+)
+
 type OutboundReportData struct {
 	Source  OutboundData
 	Records []OutboundRecord
@@ -268,6 +275,17 @@ func reconcileInventory(inbound []InventoryRecord, outbound OutboundData) Invent
 }
 
 func reconcileInventories(inbound []InventoryRecord, outbounds []OutboundData) InventoryReportData {
+	return reconcileInventoriesWithMatchMode(inbound, outbounds, string(matchByOrderNumber))
+}
+
+func reconcileInventoriesWithMatchMode(inbound []InventoryRecord, outbounds []OutboundData, matchMode string) InventoryReportData {
+	if reconciliationMatchMode(matchMode) == matchByIMEI {
+		return reconcileInventoriesByIMEI(inbound, outbounds)
+	}
+	return reconcileInventoriesByOrderNumber(inbound, outbounds)
+}
+
+func reconcileInventoriesByOrderNumber(inbound []InventoryRecord, outbounds []OutboundData) InventoryReportData {
 	report := InventoryReportData{Inbound: inbound}
 	result := ReconciliationResult{HasOutbound: len(outbounds) > 0, InboundTotal: quantityOfInbound(inbound)}
 
@@ -336,6 +354,70 @@ func reconcileInventories(inbound []InventoryRecord, outbounds []OutboundData) I
 	}
 	if len(result.Unmatched) > 0 {
 		result.Errors = append(result.Errors, fmt.Sprintf("%d 条出库单号未在入库表匹配到", len(result.Unmatched)))
+	}
+	if result.InboundTotal-result.RemainingTotal != result.OutboundDeclaredTotal {
+		result.Errors = append(result.Errors, fmt.Sprintf("入库总数 %d - 留仓总数 %d = %d，不等于出库总数 %d", result.InboundTotal, result.RemainingTotal, result.InboundTotal-result.RemainingTotal, result.OutboundDeclaredTotal))
+	}
+	result.Valid = len(result.Errors) == 0
+	report.Reconciliation = result
+	return report
+}
+
+func reconcileInventoriesByIMEI(inbound []InventoryRecord, outbounds []OutboundData) InventoryReportData {
+	report := InventoryReportData{Inbound: inbound}
+	result := ReconciliationResult{HasOutbound: len(outbounds) > 0, InboundTotal: quantityOfInbound(inbound)}
+	inboundByIMEI := make(map[string]InventoryRecord, len(inbound))
+	for _, record := range inbound {
+		if _, exists := inboundByIMEI[record.Identifier]; exists {
+			result.Errors = append(result.Errors, fmt.Sprintf("入库表存在重复 IMEI：%s", record.Identifier))
+			continue
+		}
+		inboundByIMEI[record.Identifier] = record
+	}
+	matched := make(map[string]bool)
+	seenOutbound := make(map[string]string)
+	for _, source := range outbounds {
+		shipment := OutboundReportData{Source: source}
+		result.OutboundDeclaredTotal += source.DeclaredTotal
+		result.OutboundDetailTotal += len(source.Records)
+		for _, box := range source.Boxes {
+			if box.Expected != box.Actual {
+				result.Errors = append(result.Errors, fmt.Sprintf("%s 第 %d 箱声明 %d 件，实际读取 %d 件", source.FileName, box.Number, box.Expected, box.Actual))
+			}
+		}
+		if len(source.Records) != source.DeclaredTotal {
+			result.Errors = append(result.Errors, fmt.Sprintf("%s 出库明细 %d 件与 Sheet 1 出库总数 %d 不一致", source.FileName, len(source.Records), source.DeclaredTotal))
+		}
+		for _, sourceRecord := range source.Records {
+			record := sourceRecord
+			if priorFile, exists := seenOutbound[record.Identifier]; exists {
+				result.Errors = append(result.Errors, fmt.Sprintf("IMEI %s 同时出现在 %s 和 %s", record.Identifier, priorFile, source.FileName))
+				continue
+			}
+			seenOutbound[record.Identifier] = source.FileName
+			if incoming, exists := inboundByIMEI[record.Identifier]; exists {
+				matched[record.Identifier] = true
+				result.MatchedTotal += int(incoming.Quantity)
+				record.ProductName = incoming.ProductName
+				shipment.Records = append(shipment.Records, record)
+			} else {
+				record.ProductName = source.ProductByUPC[record.UPC]
+				result.Unmatched = append(result.Unmatched, UnmatchedRecord{
+					FileName: source.FileName, BoxNumber: record.BoxNumber, TrackingNumber: record.TrackingNumber,
+					UPC: record.UPC, Identifier: record.Identifier, ProductName: record.ProductName,
+				})
+			}
+		}
+		report.Outbounds = append(report.Outbounds, shipment)
+	}
+	for _, record := range inbound {
+		if !matched[record.Identifier] {
+			report.Remaining = append(report.Remaining, record)
+		}
+	}
+	result.RemainingTotal = quantityOfInbound(report.Remaining)
+	if len(result.Unmatched) > 0 {
+		result.Errors = append(result.Errors, fmt.Sprintf("%d 条出库 IMEI 未在入库表匹配到", len(result.Unmatched)))
 	}
 	if result.InboundTotal-result.RemainingTotal != result.OutboundDeclaredTotal {
 		result.Errors = append(result.Errors, fmt.Sprintf("入库总数 %d - 留仓总数 %d = %d，不等于出库总数 %d", result.InboundTotal, result.RemainingTotal, result.InboundTotal-result.RemainingTotal, result.OutboundDeclaredTotal))

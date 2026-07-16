@@ -98,6 +98,51 @@ button:disabled {
     gap: 18px;
 }
 
+.match-mode-control {
+    display: inline-flex;
+    align-items: center;
+    min-height: 34px;
+    overflow: hidden;
+    border: 1px solid #b9d7d4;
+    border-radius: 5px;
+    background: #fff;
+    color: var(--teal-dark);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.match-mode-label {
+    padding: 0 9px;
+    color: var(--muted);
+}
+
+.match-mode-option {
+    position: relative;
+    display: grid;
+    min-width: 48px;
+    min-height: 32px;
+    place-items: center;
+    padding: 0 9px;
+    border-left: 1px solid #b9d7d4;
+    cursor: pointer;
+}
+
+.match-mode-option input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.match-mode-option.active {
+    background: var(--teal);
+    color: #fff;
+}
+
+.match-mode-option:has(input:disabled) {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
 .source-status {
     gap: 8px;
     color: #3f5969;
@@ -979,6 +1024,10 @@ h2 {
     }
 
     .source-status {
+        display: none;
+    }
+
+    .match-mode-label {
         display: none;
     }
 

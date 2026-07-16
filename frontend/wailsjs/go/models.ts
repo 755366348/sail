@@ -6,6 +6,7 @@ export namespace main {
 	    valueField: string;
 	    aggregation: string;
 	    reportPerson: string;
+	    matchMode: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new PivotConfig(source);
@@ -18,6 +19,7 @@ export namespace main {
 	        this.valueField = source["valueField"];
 	        this.aggregation = source["aggregation"];
 	        this.reportPerson = source["reportPerson"];
+	        this.matchMode = source["matchMode"];
 	    }
 	}
 	export class ImportResult {

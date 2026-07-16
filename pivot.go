@@ -17,6 +17,7 @@ type PivotConfig struct {
 	ValueField   string   `json:"valueField"`
 	Aggregation  string   `json:"aggregation"`
 	ReportPerson string   `json:"reportPerson"`
+	MatchMode    string   `json:"matchMode"`
 }
 
 // PivotRow represents one display row in the pivot preview.

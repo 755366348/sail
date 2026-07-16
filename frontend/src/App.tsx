@@ -22,6 +22,7 @@ import {GetReconciliation, PreviewPivot, RemoveOutboundFile, ResetSession, SaveR
 import './App.css';
 
 type Aggregation = 'count' | 'sum';
+type MatchMode = 'orderNumber' | 'imei';
 
 type PivotConfig = {
     rowFields: string[];
@@ -29,6 +30,7 @@ type PivotConfig = {
     valueField: string;
     aggregation: Aggregation;
     reportPerson: string;
+    matchMode: MatchMode;
 };
 
 type ImportResult = {
@@ -94,6 +96,7 @@ const emptyConfig: PivotConfig = {
     valueField: '',
     aggregation: 'count',
     reportPerson: '',
+    matchMode: 'orderNumber',
 };
 
 function errorText(error: unknown) {
@@ -110,7 +113,7 @@ function App() {
     const [preview, setPreview] = useState<PivotResult | null>(null);
     const [outbounds, setOutbounds] = useState<OutboundImportResult[]>([]);
     const [reconciliation, setReconciliation] = useState<ReconciliationResult | null>(null);
-    const [busy, setBusy] = useState<'import' | 'outbound' | 'preview' | 'save' | 'reset' | null>(null);
+    const [busy, setBusy] = useState<'import' | 'outbound' | 'preview' | 'save' | 'reset' | 'match' | null>(null);
     const [error, setError] = useState('');
     const [savedReport, setSavedReport] = useState<SaveResult | null>(null);
     const [showInvalidConfirm, setShowInvalidConfirm] = useState(false);
@@ -120,6 +123,7 @@ function App() {
     const dataRows = preview?.rows.filter((row) => !row.isTotal) ?? [];
     const outboundDetailTotal = outbounds.reduce((total, outbound) => total + outbound.detailTotal, 0);
     const canSave = Boolean(preview && config.reportPerson.trim());
+    const matchFieldLabel = config.matchMode === 'imei' ? 'IMEI' : '单号';
 
     const updateConfig = (changes: Partial<PivotConfig>) => {
         setConfig((current) => ({...current, ...changes}));
@@ -143,11 +147,31 @@ function App() {
         setSavedReport(null);
     };
 
-    const refreshReconciliation = async () => {
+    const refreshReconciliation = async (matchMode: MatchMode = config.matchMode) => {
         try {
-            setReconciliation(await GetReconciliation() as ReconciliationResult);
+            setReconciliation(await GetReconciliation(matchMode) as ReconciliationResult);
         } catch (cause) {
             setError(errorText(cause));
+        }
+    };
+
+    const selectMatchMode = async (matchMode: MatchMode) => {
+        if (matchMode === config.matchMode || busy !== null) {
+            return;
+        }
+        setBusy('match');
+        setError('');
+        setSavedReport(null);
+        setShowInvalidConfirm(false);
+        setConfig((current) => ({...current, matchMode}));
+        try {
+            if (outbounds.length > 0) {
+                setReconciliation(await GetReconciliation(matchMode) as ReconciliationResult);
+            }
+        } catch (cause) {
+            setError(errorText(cause));
+        } finally {
+            setBusy(null);
         }
     };
 
@@ -175,12 +199,12 @@ function App() {
         try {
             const imported = await SelectSourceFile() as ImportResult;
             setSource(imported);
-            const nextConfig = {...imported.suggestedConfig, reportPerson: config.reportPerson};
+            const nextConfig = {...imported.suggestedConfig, reportPerson: config.reportPerson, matchMode: config.matchMode};
             setConfig(nextConfig);
             setBusy('preview');
             setPreview(await PreviewPivot(nextConfig) as PivotResult);
             if (outbounds.length > 0) {
-                await refreshReconciliation();
+                await refreshReconciliation(nextConfig.matchMode);
             }
         } catch (cause) {
             const message = errorText(cause);
@@ -284,6 +308,17 @@ function App() {
                     </div>
                 </div>
                 <div className="topbar-meta">
+                    <div className="match-mode-control" role="radiogroup" aria-label="出入库校验方式">
+                        <span className="match-mode-label">校验</span>
+                        <label className={`match-mode-option ${config.matchMode === 'orderNumber' ? 'active' : ''}`}>
+                            <input type="radio" name="match-mode" value="orderNumber" checked={config.matchMode === 'orderNumber'} onChange={() => void selectMatchMode('orderNumber')} disabled={busy !== null}/>
+                            <span>单号</span>
+                        </label>
+                        <label className={`match-mode-option ${config.matchMode === 'imei' ? 'active' : ''}`}>
+                            <input type="radio" name="match-mode" value="imei" checked={config.matchMode === 'imei'} onChange={() => void selectMatchMode('imei')} disabled={busy !== null}/>
+                            <span>IMEI</span>
+                        </label>
+                    </div>
                     {source ? (
                         <span className="source-status"><span className="status-dot"/> 入库 {source.rowCount.toLocaleString()} 条{outbounds.length > 0 ? ` · ${outbounds.length} 份出库表 / ${outboundDetailTotal} 条` : ''}</span>
                     ) : (
@@ -460,7 +495,7 @@ function App() {
                                     <div className="validation-errors">{reconciliation.errors.map((item) => <span key={item}>{item}</span>)}</div>
                                     {reconciliation.unmatched.length > 0 && (
                                         <div className="unmatched-block">
-                                            <div className="unmatched-title"><Box size={15}/> 未匹配出库单号 ({reconciliation.unmatched.length})</div>
+                                            <div className="unmatched-title"><Box size={15}/> 未匹配出库{matchFieldLabel} ({reconciliation.unmatched.length})</div>
                                             <div className="unmatched-table-wrap">
                                                 <table className="unmatched-table">
                                                     <thead><tr><th>出库表</th><th>箱号</th><th>单号</th><th>UPC</th><th>IMEI</th></tr></thead>
@@ -528,7 +563,7 @@ function App() {
                         <div className="confirm-icon"><AlertTriangle size={22}/></div>
                         <div>
                             <h2 id="invalid-confirm-title">校验未通过</h2>
-                            <p>将导出已匹配的正常出库记录和对应留仓数据，忽略 {reconciliation.unmatched.length} 条未匹配单号。异常清单不会写入报表。</p>
+                            <p>将导出已匹配的正常出库记录和对应留仓数据，忽略 {reconciliation.unmatched.length} 条未匹配{matchFieldLabel}。异常清单不会写入报表。</p>
                         </div>
                         <div className="confirm-actions">
                             <button className="button button-secondary" onClick={() => setShowInvalidConfirm(false)}>取消</button>
